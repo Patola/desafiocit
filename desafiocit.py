@@ -14,7 +14,7 @@ __status__ = "Prototype"
 
 
 from flask import Flask
-from flask.ext.api import status
+from flask_api import status
 from celery import Celery
 import pika
 import pandas as pd
@@ -27,6 +27,7 @@ import csv
 MY_EXCHANGE = 'cards'
 MY_QUEUE = 'cards'
 MY_ROUTINGKEY = 'moving_cards'
+MY_HOST = '127.0.0.1'
 
 
 MY_DBHOST = '127.0.0.1'  # if we used localhost it would use a file socket
@@ -42,7 +43,6 @@ MY_OUTFILE = '/tmp/cards_db.txt'
 
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = MY_SQLURI
 app.config['CELERY_BROKER_URL'] = MY_BROKERURL
 app.config['CELERY_RESULT_BACKEND'] = MY_RESULTBACKEND
 
@@ -53,7 +53,7 @@ rbconnection = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
 channel = rbconnection.channel()
 channel.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
 myqueue_object = channel.queue_declare(queue=MY_QUEUE)
-channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object)
+channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue)
 
 dbconnection = pymysql.connect(
         host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
@@ -80,8 +80,7 @@ def moveall_async(conn):
 @app.route('/moveall', methods=['GET'])
 def moveall():
     moveall_async.delay(conn)
-    content = ''
-    return content, status.HTTP_202_ACCEPTED
+    return 'Accepted.', 202
 
 
 @app.route('/movecards/:<expansion_id>', methods=['POST'])
@@ -92,7 +91,8 @@ def movecards(expansion_id):
         sqlquery = "SELECT * FROM magicexpansion WHERE ExpansionId = %s"
         amount = cursor.execute(sqlquery, expansion_id)
         if amount == 0:
-            return '', status.404_NOT_FOUND
+            content = 'Not found!'
+            return content, 404
         else:
             card=cursor.fetchone()
             expansion_name=card['Name']
@@ -119,7 +119,7 @@ def card(card_id):
 
 def callback_consumer(ch, method, properties, body):
     jsonbody=json.loads(body)
-    f=csv.writer(open(MY_OUTFILE),'a'))
+    f=csv.writer(open(MY_OUTFILE,'a'))
     for row in jsonbody: # Hopefully only one
         f.writerow(row.values())
     f.close()
@@ -127,6 +127,11 @@ def callback_consumer(ch, method, properties, body):
 
 @celery.task
 def cards_consumer_service(channel,MY_QUEUE):
+
+    f=open(MY_OUTFILE, "rw+")
+    f.truncate()
+    f.close()
+
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(callback_consumer,
                           queue=MY_QUEUE,
@@ -135,7 +140,7 @@ def cards_consumer_service(channel,MY_QUEUE):
 
 
 @app.route('/card/:<card_id>', methods=['GET'])
-def card(card_id):
+def getcard(card_id):
     try:
         with open(MY_OUTFILE, newline='', mode='r') as mycsv:
             reader = csv.reader(mycsv)
@@ -144,7 +149,8 @@ def card(card_id):
                     mycsv.close()
                     return row
             mycsv.close()
-            return None, status.404_NOT_FOUND
+            content = 'Card not found!'
+            return content, 404
     except IOError:
-        return "ERROR, no CSV file found (" + MY_OUTFILE + ")", status.HTTP_412_PRECONDITION_FAILED
+        return 'No outfile found', 412
 
