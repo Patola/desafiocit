@@ -23,6 +23,7 @@ import pymysql
 import simplejson
 import csv
 
+CELERY_TASK_SERIALIZER = 'pickle'
 
 MY_EXCHANGE = 'cards'
 MY_QUEUE = 'cards'
@@ -39,7 +40,7 @@ MY_DBTABLE = 'magiccards'
 
 MY_BROKERURL = 'amqp://guest:guest@localhost:5672//'
 MY_RESULTBACKEND = 'amqp://guest:guest@localhost:5672//'
-MY_OUTFILE = '/tmp/cards_db.txt'
+MY_OUTFILE = './cards_db.txt'
 
 
 app = Flask(__name__)
@@ -66,12 +67,11 @@ def cards_consumer_callback(ch, method, properties, body):
 
 
 @celery.task
-def moveall_async():
+def moveall_async(conn):
     """Background task to move all cards"""
-    conn = dbconnection
     with conn.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
-        amount = cursor.execute(sqlquery)
+        cursor.execute(sqlquery)
         for expansion in cursor.fetchall():
             expansion_id = expansion['ExpansionId']
             movecards(expansion_id)
@@ -80,7 +80,7 @@ def moveall_async():
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.delay()
+    moveall_async.apply_async(args=[dbconnection], serializer="pickle")
     return 'Accepted.', 202
 
 
@@ -127,17 +127,17 @@ def callback_consumer(ch, method, properties, body):
 
 
 @celery.task
-def cards_consumer_service(channel,MY_QUEUE):
+def cards_consumer_service(mychan, myqueue, myoutfile):
 
-    f=open(MY_OUTFILE, "rw+")
+    f=open(myoutfile, "w")
     f.truncate()
     f.close()
 
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(callback_consumer,
-                          queue=MY_QUEUE,
+    mychan.basic_qos(prefetch_count=1)
+    mychan.basic_consume(callback_consumer,
+                          queue=myqueue,
                           no_ack=False)
-    channel.start_consuming()
+    chan.start_consuming()
 
 
 @app.route('/card/:<card_id>', methods=['GET'])
@@ -155,3 +155,5 @@ def getcard(card_id):
     except IOError:
         return 'No outfile found', 412
 
+
+cards_consumer_service.apply_async(args=[channel, MY_QUEUE, MY_OUTFILE], serializer="pickle")
