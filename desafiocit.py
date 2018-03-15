@@ -66,7 +66,7 @@ def cards_consumer_callback(ch, method, properties, body):
 
 
 @celery.task
-def moveall_async():
+def moveall_async(conn):
     """Background task to move all cards"""
     with conn.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
@@ -79,7 +79,7 @@ def moveall_async():
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async()
+    moveall_async.delay(conn)
     content = ''
     return content, status.HTTP_202_ACCEPTED
 
@@ -117,19 +117,34 @@ def card(card_id):
     content = ''
     return content
 
+def callback_consumer(ch, method, properties, body):
+    jsonbody=json.loads(body)
+    f=csv.writer(open(MY_OUTFILE),'a'))
+    for row in jsonbody: # Hopefully only one
+        f.writerow(row.values())
+    f.close()
 
-def cards_consumer():
-    return
+
+@celery.task
+def cards_consumer_service(channel,MY_QUEUE):
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(callback_consumer,
+                          queue=MY_QUEUE,
+                          no_ack=False)
+    channel.start_consuming()
 
 
-def getcsv_by_id(file, gathererid):
+@app.route('/card/:<card_id>', methods=['GET'])
+def card(card_id):
     try:
-        with open(MY_OUTFILE, newline='') as mycsv:
+        with open(MY_OUTFILE, newline='', mode='r') as mycsv:
             reader = csv.reader(mycsv)
             for row in reader:
-                if row[0] == gathererid:
+                if row[0] == card_id:
+                    mycsv.close()
                     return row
-            return None
+            mycsv.close()
+            return None, status.404_NOT_FOUND
     except IOError:
-        return "ERROR"
+        return "ERROR, no CSV file found (" + MY_OUTFILE + ")", status.HTTP_412_PRECONDITION_FAILED
 
