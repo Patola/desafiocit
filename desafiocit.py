@@ -21,6 +21,7 @@ import pandas as pd
 from pandas.io import sql
 import pymysql
 import simplejson
+import csv
 
 
 MY_EXCHANGE = 'cards'
@@ -67,6 +68,12 @@ def cards_consumer_callback(ch, method, properties, body):
 @celery.task
 def moveall_async():
     """Background task to move all cards"""
+    with conn.cursor() as cursor:
+        sqlquery = "SELECT ExpansionId,Name from magicexpansion"
+        amount = cursor.execute(sqlquery)
+        for expansion in cursor.fetchall():
+            expansion_id = expansion['ExpansionId']
+            movecards(expansion_id)
     return
 
 
@@ -116,4 +123,13 @@ def cards_consumer():
 
 
 def getcsv_by_id(file, gathererid):
-    return
+    try:
+        with open(MY_OUTFILE, newline='') as mycsv:
+            reader = csv.reader(mycsv)
+            for row in reader:
+                if row[0] == gathererid:
+                    return row
+            return None
+    except IOError:
+        return "ERROR"
+
