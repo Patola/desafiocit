@@ -66,8 +66,9 @@ def cards_consumer_callback(ch, method, properties, body):
 
 
 @celery.task
-def moveall_async(conn):
+def moveall_async():
     """Background task to move all cards"""
+    conn = dbconnection
     with conn.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
         amount = cursor.execute(sqlquery)
@@ -79,7 +80,7 @@ def moveall_async(conn):
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.delay(dbconnection)
+    moveall_async.delay()
     return 'Accepted.', 202
 
 
