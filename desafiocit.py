@@ -79,13 +79,13 @@ def moveall_async(conn):
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.delay(conn)
+    moveall_async.delay(dbconnection)
     return 'Accepted.', 202
 
 
 @app.route('/movecards/:<expansion_id>', methods=['POST'])
 def movecards(expansion_id):
-    with conn.cursor() as cursor:
+    with dbconnection.cursor() as cursor:
         expansion_name=''
         # validate expansion_id:
         sqlquery = "SELECT * FROM magicexpansion WHERE ExpansionId = %s"
