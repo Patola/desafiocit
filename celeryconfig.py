@@ -1,6 +1,10 @@
 ## Broker settings.
 broker_url = 'amqp://guest:guest@127.0.0.1:5672//'
 
+# serializer
+celery_task_serializer = 'pickle'
+CELERY_TASK_SERIALIZER = 'pickle'
+
 # List of modules to import when the Celery worker starts.
 # imports = ('myapp.tasks',)
 imports = ('desafiocit', )
