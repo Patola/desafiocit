@@ -48,7 +48,8 @@ app.config['CELERY_BROKER_URL'] = MY_BROKERURL
 app.config['CELERY_RESULT_BACKEND'] = MY_RESULTBACKEND
 app.config['BROKER_HEARTBEAT'] = 0
 
-# celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+# celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'],
+#                 backend=app.config['CELERY_RESULT_BACKEND'])
 # celery.conf.update(app.config)
 
 rbconnection = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
@@ -85,19 +86,41 @@ celery = make_celery(app)
 @celery.task()
 def moveall_async():
     """Background task to move all cards"""
+    rbconnection2 = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
+    channel2 = rbconnection2.channel()
+    channel2.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
+    channel2.queue_declare(queue=MY_QUEUE)
+    channel2.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
+        routing_key=MY_ROUTINGKEY)
+
+    dbconnection2 = pymysql.connect(
+        host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
+        db=MY_DBDATABASE, charset='latin1',
+        cursorclass=pymysql.cursors.DictCursor)
+
+
     f = open("./moveall-log.txt", "w")
     f.write("db_host " + MY_DBHOST + ", dbuser " + MY_DBUSER +
              " db " + MY_DBDATABASE + " dbpassword " + MY_DBPASSWORD  +
              " db connection " + str(dbconnection))
 #    f.close()
 
-    with dbconnection.cursor() as cursor:
-        sqlquery = "SELECT ExpansionId,Name from magicexpansion"
-        cursor.execute(sqlquery)
-        for expansion in cursor.fetchall():
-            expansion_id = expansion['ExpansionId']
-            f.write(str(expansion_id) + "\n")
-            movecards(expansion_id)
+    with dbconnection2.cursor() as cursor2:
+        sqlquery2 = "SELECT * FROM magiccard ORDER BY ExpansionId"
+        cursor2.execute(sqlquery2)
+        for card2 in cursor2.fetchall():
+            json_record2 = simplejson.dumps(card2)
+            f = open("./movecards2-log.log", "a")
+            f.write("Vou enviar o json: " + str(json_record2) + "\n" +
+                    "=====================================\n")
+            f.close()
+            channel2.basic_publish(
+                     exchange=MY_EXCHANGE,
+                     routing_key=MY_ROUTINGKEY,
+                     body=json_record2,
+                     )
+    rbconnection2.close()
+    dbconnection2.close()           
     f.close()
     return
 
@@ -175,11 +198,18 @@ def cards_consumer_service():
     f = open(MY_OUTFILE, "w") # initialize cards file
     f.truncate()
     f.close()
-    
+    rbconnection3 = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
+    channel3 = rbconnection3.channel()
+    channel3.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
+    channel3.queue_declare(queue=MY_QUEUE)
+    channel3.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
+        routing_key=MY_ROUTINGKEY)
+
+   
 #    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(cards_consumer_callback,
+    channel3.basic_consume(cards_consumer_callback,
                           queue=MY_QUEUE, no_ack=False)
-    channel.start_consuming()
+    channel3.start_consuming()
 
 
-cards_consumer_service.apply_async()
+cards_consumer_service.delay()
