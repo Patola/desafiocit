@@ -15,15 +15,14 @@ __status__ = "Prototype"
 
 from flask import Flask
 from flask_api import status
-from celery import Celery
+import threading
 import pika
 import pandas as pd
 from pandas.io import sql
 import pymysql
+import json
 import simplejson
 import csv
-
-CELERY_TASK_SERIALIZER = 'pickle'
 
 MY_EXCHANGE = 'cards'
 MY_QUEUE = 'cards'
@@ -44,43 +43,43 @@ MY_OUTFILE = './cards_db.txt'
 
 
 app = Flask(__name__)
-app.config['CELERY_BROKER_URL'] = MY_BROKERURL
-app.config['CELERY_RESULT_BACKEND'] = MY_RESULTBACKEND
-
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
 
 rbconnection = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
 channel = rbconnection.channel()
 channel.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
-myqueue_object = channel.queue_declare(queue=MY_QUEUE)
-channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue)
+myqueue_object = channel.queue_declare(queue=MY_QUEUE, durable=True)
+channel.queue_bind(exchange=MY_EXCHANGE, queue=MY_QUEUE, routing_key=MY_ROUTINGKEY)
 
 dbconnection = pymysql.connect(
         host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
         db=MY_DBDATABASE, charset='latin1',
         cursorclass=pymysql.cursors.DictCursor)
 
+def writelog(msg):
+    f=open("./log-error.log", "a")
+    f.write(msg + "\n")
+
 
 def cards_consumer_callback(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-@celery.task
-def moveall_async(conn):
+def moveall_async():
     """Background task to move all cards"""
-    with conn.cursor() as cursor:
+    with dbconnection.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
         cursor.execute(sqlquery)
         for expansion in cursor.fetchall():
             expansion_id = expansion['ExpansionId']
+            writelog("moveall_async: expansion_id " + str(expansion_id))
             movecards(expansion_id)
     return
 
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.apply_async(args=[dbconnection], serializer="pickle")
+    writelog("moveall")
+    threading.Thread(target=moveall_async).start()
     return 'Accepted.', 202
 
 
@@ -93,20 +92,26 @@ def movecards(expansion_id):
         amount = cursor.execute(sqlquery, expansion_id)
         if amount == 0:
             content = 'Not found!'
+            writelog("movecards: not found")
             return content, 404
         else:
             card=cursor.fetchone()
             expansion_name=card['Name']
+            writelog("movecards: "+ expansion_name)
 
         sqlquery = "SELECT * FROM magiccard WHERE ExpansionId = %s"
         amount=cursor.execute(sqlquery, expansion_id)
-        for card in cursor.fetchall():
-            json_record = simplejson.dumps(card)
+        writelog ("found " + str(amount) + " results in magiccard")
+        listjson=[dict((cursor.description[i][0], value) for i, value in enumerate(row)) for row in cursor.fetchall()]
+        writelog("listjson: type "+str(type(listjson)))
+        for jsonelem in listjson:
             channel.basic_publish(
-                    exchange=MY_EXCHANGE,
-                    routing_key=MY_ROUTINGKEY,
-                    body=json_record
-                    )
+                exchange=MY_EXCHANGE,
+                routing_key=MY_ROUTINGKEY,
+                body=json.dumps(jsonelem, ensure_ascii=True),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # make message persistent
+                ))
 
 
     content = expansion_name + ' ' + str(amount)
@@ -119,25 +124,28 @@ def card(card_id):
     return content
 
 def callback_consumer(ch, method, properties, body):
-    jsonbody=json.loads(body)
-    f=csv.writer(open(MY_OUTFILE,'a'))
-    for row in jsonbody: # Hopefully only one
-        f.writerow(row.values())
-    f.close()
+    writelog("Consumer running with body type: [" + str(type(body)) + "] string " + str(body))
+#    newbody=body.replace("{u'","{'").replace(", u'",", '").replace(": u'",": '")
+#    writelog("Consumer running with newbody type: [" + str(type(newbody)) + "] string " + str(newbody))
+    transbody=json.loads(body)
+    f = csv.writer(open(MY_OUTFILE, 'a'))
+#    for row in jsonbody: # Hopefully only one
+    f.writerow(transbody.values())
+    #f.close()
 
 
-@celery.task
-def cards_consumer_service(mychan, myqueue, myoutfile):
+def cards_consumer_service():
 
-    f=open(myoutfile, "w")
+    writelog("cards_consumer_service, outfile " + MY_OUTFILE)
+    f = open(MY_OUTFILE, "w")
     f.truncate()
     f.close()
 
-    mychan.basic_qos(prefetch_count=1)
-    mychan.basic_consume(callback_consumer,
-                          queue=myqueue,
+#    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(callback_consumer,
+                          queue=MY_QUEUE,
                           no_ack=False)
-    chan.start_consuming()
+    channel.start_consuming()
 
 
 @app.route('/card/:<card_id>', methods=['GET'])
@@ -156,4 +164,4 @@ def getcard(card_id):
         return 'No outfile found', 412
 
 
-cards_consumer_service.apply_async(args=[channel, MY_QUEUE, MY_OUTFILE], serializer="pickle")
+threading.Thread(target=cards_consumer_service).start()
