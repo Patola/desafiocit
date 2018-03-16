@@ -5,6 +5,8 @@ broker_url = 'amqp://guest:guest@127.0.0.1:5672//'
 # imports = ('myapp.tasks',)
 imports = ('desafiocit', )
 
+broker_heartbeat=0
+
 ## Using the database to store task state and results.
 result_backend = 'db+sqlite:///results.db'
 
