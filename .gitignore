@@ -1,2 +1,4 @@
 .*.swp
 *.pyc
+cards_db.txt
+results.db
