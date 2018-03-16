@@ -17,7 +17,7 @@ from flask import Flask
 from flask_api import status
 import threading
 import pika
-import pandas as pd
+import pandas
 from pandas.io import sql
 import pymysql
 import json
