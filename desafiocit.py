@@ -23,7 +23,7 @@ import pymysql
 import simplejson
 import csv
 
-CELERY_TASK_SERIALIZER = 'pickle'
+#CELERY_TASK_SERIALIZER = 'pickle'
 
 MY_EXCHANGE = 'cards'
 MY_QUEUE = 'cards'
@@ -67,7 +67,7 @@ def cards_consumer_callback(ch, method, properties, body):
 
 
 @celery.task
-def moveall_async(conn):
+def moveall_async():
     """Background task to move all cards"""
     with conn.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
@@ -80,7 +80,7 @@ def moveall_async(conn):
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.apply_async(args=[dbconnection], serializer="pickle")
+    moveall_async.apply_async(args=[dbconnection])
     return 'Accepted.', 202
 
 
@@ -118,26 +118,25 @@ def card(card_id):
     content = ''
     return content
 
+
 def callback_consumer(ch, method, properties, body):
-    jsonbody=json.loads(body)
-    f=csv.writer(open(MY_OUTFILE,'a'))
-    for row in jsonbody: # Hopefully only one
-        f.writerow(row.values())
+    f = open(MY_OUTFILE, 'a')
+    f.write(body)
     f.close()
 
 
 @celery.task
-def cards_consumer_service(mychan, myqueue, myoutfile):
+def cards_consumer_service():
 
-    f=open(myoutfile, "w")
+    f = open(MY_OUTFILE, "w")
     f.truncate()
     f.close()
 
-    mychan.basic_qos(prefetch_count=1)
-    mychan.basic_consume(callback_consumer,
-                          queue=myqueue,
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(callback_consumer,
+                          queue=MY_QUEUE,
                           no_ack=False)
-    chan.start_consuming()
+    channel.start_consuming()
 
 
 @app.route('/card/:<card_id>', methods=['GET'])
@@ -156,4 +155,4 @@ def getcard(card_id):
         return 'No outfile found', 412
 
 
-cards_consumer_service.apply_async(args=[channel, MY_QUEUE, MY_OUTFILE], serializer="pickle")
+cards_consumer_service.apply_async()
