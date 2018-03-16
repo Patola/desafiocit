@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# vim: set fileencoding=utf-8 :
+# coding=latin-1
 
 """desafiocit: a simple microservices implementation for CI&T."""
 
@@ -14,10 +14,11 @@ __status__ = "Prototype"
 
 
 from flask import Flask
-from flask_api import status
 from celery import Celery
+from unidecode import unidecode
 import pika
 import pandas
+import unicodedata
 from pandas.io import sql
 import pymysql
 import simplejson
@@ -40,7 +41,7 @@ MY_DBTABLE = 'magiccards'
 
 MY_BROKERURL = 'amqp://guest:guest@localhost:5672//'
 MY_RESULTBACKEND = 'amqp://guest:guest@localhost:5672//'
-MY_OUTFILE = './cards_db.txt'
+MY_OUTFILE = '/tmp/cards_db.txt'
 
 
 app = Flask(__name__)
@@ -64,6 +65,17 @@ dbconnection = pymysql.connect(
         db=MY_DBDATABASE, charset='latin1',
         cursorclass=pymysql.cursors.DictCursor)
 
+def sanitize(arg):
+    if isinstance(arg,str):
+        return unidecode(unicode(arg,'utf8'))
+    elif isinstance(arg, unicode):
+        return unidecode(arg)
+    elif isinstance(arg, int):
+        return str(arg)
+    elif isinstance(arg, dict):
+        for key, value in arg.iteritems():
+            arg[key] = sanitize(value)
+        return arg
 
 def make_celery(app):
     celery = Celery(app.import_name, backend=app.config['CELERY_RESULT_BACKEND'],
@@ -99,21 +111,12 @@ def moveall_async():
         cursorclass=pymysql.cursors.DictCursor)
 
 
-    f = open("./moveall-log.txt", "w")
-    f.write("db_host " + MY_DBHOST + ", dbuser " + MY_DBUSER +
-             " db " + MY_DBDATABASE + " dbpassword " + MY_DBPASSWORD  +
-             " db connection " + str(dbconnection))
-#    f.close()
-
     with dbconnection2.cursor() as cursor2:
         sqlquery2 = "SELECT * FROM magiccard ORDER BY ExpansionId"
         cursor2.execute(sqlquery2)
         for card2 in cursor2.fetchall():
-            json_record2 = simplejson.dumps(card2)
-            f = open("./movecards2-log.log", "a")
-            f.write("Vou enviar o json: " + str(json_record2) + "\n" +
-                    "=====================================\n")
-            f.close()
+            json_record2 = sanitize(simplejson.dumps(card2,
+                           encoding='latin1'))
             channel2.basic_publish(
                      exchange=MY_EXCHANGE,
                      routing_key=MY_ROUTINGKEY,
@@ -148,11 +151,7 @@ def movecards(expansion_id):
         sqlquery = "SELECT * FROM magiccard WHERE ExpansionId = %s"
         amount=cursor.execute(sqlquery, expansion_id)
         for card in cursor.fetchall():
-            json_record = simplejson.dumps(card)
-            f = open("./movecards-log.log", "a")
-            f.write("Vou enviar o json: " + str(json_record) + "\n" +
-                    "=====================================\n")
-            f.close()
+            json_record = sanitize(simplejson.dumps(card))  # sanitize string
             channel.basic_publish(
                      exchange=MY_EXCHANGE,
                      routing_key=MY_ROUTINGKEY,
@@ -166,14 +165,24 @@ def movecards(expansion_id):
 
 @app.route('/card/:<card_id>', methods=['GET'])
 def card(card_id):
+    f = open(MY_OUTFILE, 'r')
+    fcsv = csv.reader(f)
+    for row in fcsv:
+        if str(row[19] == str(card_id):
+            return str(row)
     content = ''
-    return content
+    return content, 404
 
 
 def cards_consumer_callback(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
     f = open(MY_OUTFILE, 'a')
-    f.write(body + "\n~~~~~~~~~~~\n")
+#    simplejson.dump(body, f)
+    data = simplejson.JSONDecoder().decode(body)
+    sanitize(data)
+    output = csv.writer(f)
+    output.writerow(data.values())
+
     f.close()
     return
  
@@ -206,7 +215,6 @@ def cards_consumer_service():
         routing_key=MY_ROUTINGKEY)
 
    
-#    channel.basic_qos(prefetch_count=1)
     channel3.basic_consume(cards_consumer_callback,
                           queue=MY_QUEUE, no_ack=False)
     channel3.start_consuming()
