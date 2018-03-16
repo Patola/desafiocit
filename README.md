@@ -18,9 +18,9 @@ __E instalar o celery para as tarefas em background pelo pip:
 ```
 pip install celery --user
 ```
+------
 O celery deve ser preferencialmente instalado pelo pip como usuário para ele respeitar preferências locais. Caso você instale do repositório, ele se acopla ao systemd e ficar com configurações em lugares diferentes. Não esqueça de ter o diretório `~/.local/bin` no seu PATH.
-
----------|
+------
 
 ## Como executar
 Você precisará executar o `desafiocti.py` no contexto do Flask, ou seja:
