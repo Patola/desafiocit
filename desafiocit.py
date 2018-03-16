@@ -21,7 +21,6 @@ import pandas
 import unicodedata
 from pandas.io import sql
 import pymysql
-import json
 import simplejson
 import csv
 
@@ -144,12 +143,10 @@ def movecards(expansion_id):
         amount = cursor.execute(sqlquery, expansion_id)
         if amount == 0:
             content = 'Not found!'
-            writelog("movecards: not found")
             return content, 404
         else:
             card=cursor.fetchone()
             expansion_name=card['Name']
-            writelog("movecards: "+ expansion_name)
 
         sqlquery = "SELECT * FROM magiccard WHERE ExpansionId = %s"
         amount=cursor.execute(sqlquery, expansion_id)
