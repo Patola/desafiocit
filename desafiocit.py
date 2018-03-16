@@ -17,13 +17,13 @@ from flask import Flask
 from flask_api import status
 from celery import Celery
 import pika
-import pandas as pd
+import pandas
 from pandas.io import sql
 import pymysql
 import simplejson
 import csv
 
-#CELERY_TASK_SERIALIZER = 'pickle'
+# CELERY_TASK_SERIALIZER = 'pickle'
 
 MY_EXCHANGE = 'cards'
 MY_QUEUE = 'cards'
@@ -46,15 +46,17 @@ MY_OUTFILE = './cards_db.txt'
 app = Flask(__name__)
 app.config['CELERY_BROKER_URL'] = MY_BROKERURL
 app.config['CELERY_RESULT_BACKEND'] = MY_RESULTBACKEND
+app.config['BROKER_HEARTBEAT'] = 0
 
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
+# celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+# celery.conf.update(app.config)
 
 rbconnection = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
 channel = rbconnection.channel()
 channel.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
 myqueue_object = channel.queue_declare(queue=MY_QUEUE)
-channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue)
+channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
+        routing_key=MY_ROUTINGKEY)
 
 dbconnection = pymysql.connect(
         host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
@@ -62,32 +64,54 @@ dbconnection = pymysql.connect(
         cursorclass=pymysql.cursors.DictCursor)
 
 
-def cards_consumer_callback(ch, method, properties, body):
-    ch.basic_ack(delivery_tag=method.delivery_tag)
+def make_celery(app):
+    celery = Celery(app.import_name, backend=app.config['CELERY_RESULT_BACKEND'],
+                    broker=app.config['CELERY_BROKER_URL'])
+    celery.conf.update(app.config)
+    TaskBase = celery.Task
+
+    class ContextTask(TaskBase):
+        abstract = True
+
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return TaskBase.__call__(self, *args, **kwargs)
+    celery.Task = ContextTask
+    return celery
 
 
-@celery.task
+celery = make_celery(app)
+
+@celery.task()
 def moveall_async():
     """Background task to move all cards"""
-    with conn.cursor() as cursor:
+    f = open("./moveall-log.txt", "w")
+    f.write("db_host " + MY_DBHOST + ", dbuser " + MY_DBUSER +
+             " db " + MY_DBDATABASE + " dbpassword " + MY_DBPASSWORD  +
+             " db connection " + str(dbconnection))
+#    f.close()
+
+    with dbconnection.cursor() as cursor:
         sqlquery = "SELECT ExpansionId,Name from magicexpansion"
         cursor.execute(sqlquery)
         for expansion in cursor.fetchall():
             expansion_id = expansion['ExpansionId']
+            f.write(str(expansion_id) + "\n")
             movecards(expansion_id)
+    f.close()
     return
 
 
 @app.route('/moveall', methods=['GET'])
 def moveall():
-    moveall_async.apply_async(args=[dbconnection])
+    moveall_async.apply_async()
     return 'Accepted.', 202
 
 
 @app.route('/movecards/:<expansion_id>', methods=['POST'])
 def movecards(expansion_id):
     with dbconnection.cursor() as cursor:
-        expansion_name=''
+        expansion_name = ''
         # validate expansion_id:
         sqlquery = "SELECT * FROM magicexpansion WHERE ExpansionId = %s"
         amount = cursor.execute(sqlquery, expansion_id)
@@ -102,12 +126,16 @@ def movecards(expansion_id):
         amount=cursor.execute(sqlquery, expansion_id)
         for card in cursor.fetchall():
             json_record = simplejson.dumps(card)
+            f = open("./movecards-log.log", "a")
+            f.write("Vou enviar o json: " + str(json_record) + "\n" +
+                    "=====================================\n")
+            f.close()
             channel.basic_publish(
-                    exchange=MY_EXCHANGE,
-                    routing_key=MY_ROUTINGKEY,
-                    body=json_record
-                    )
-
+                     exchange=MY_EXCHANGE,
+                     routing_key=MY_ROUTINGKEY,
+                     body=json_record
+                     )
+ 
 
     content = expansion_name + ' ' + str(amount)
     return content
@@ -119,25 +147,13 @@ def card(card_id):
     return content
 
 
-def callback_consumer(ch, method, properties, body):
+def cards_consumer_callback(ch, method, properties, body):
+    ch.basic_ack(delivery_tag=method.delivery_tag)
     f = open(MY_OUTFILE, 'a')
-    f.write(body)
+    f.write(body + "\n~~~~~~~~~~~\n")
     f.close()
-
-
-@celery.task
-def cards_consumer_service():
-
-    f = open(MY_OUTFILE, "w")
-    f.truncate()
-    f.close()
-
-    channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(callback_consumer,
-                          queue=MY_QUEUE,
-                          no_ack=False)
-    channel.start_consuming()
-
+    return
+ 
 
 @app.route('/card/:<card_id>', methods=['GET'])
 def getcard(card_id):
@@ -153,6 +169,17 @@ def getcard(card_id):
             return content, 404
     except IOError:
         return 'No outfile found', 412
+
+@celery.task()
+def cards_consumer_service():
+    f = open(MY_OUTFILE, "w") # initialize cards file
+    f.truncate()
+    f.close()
+    
+#    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(cards_consumer_callback,
+                          queue=MY_QUEUE, no_ack=False)
+    channel.start_consuming()
 
 
 cards_consumer_service.apply_async()
