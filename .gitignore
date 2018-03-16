@@ -1,4 +1,5 @@
 .*.swp
 *.pyc
-cards_db.txt
+*.log
+*.txt
 results.db
