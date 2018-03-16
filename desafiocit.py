@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# coding=latin-1
+# -*- coding: latin-1 -*-
 
 """desafiocit: a simple microservices implementation for CI&T."""
 
@@ -17,9 +17,6 @@ from flask import Flask
 from celery import Celery
 from unidecode import unidecode
 import pika
-import pandas
-import unicodedata
-from pandas.io import sql
 import pymysql
 import simplejson
 import csv
@@ -58,16 +55,17 @@ channel = rbconnection.channel()
 channel.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
 myqueue_object = channel.queue_declare(queue=MY_QUEUE)
 channel.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
-        routing_key=MY_ROUTINGKEY)
+                   routing_key=MY_ROUTINGKEY)
 
 dbconnection = pymysql.connect(
         host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
         db=MY_DBDATABASE, charset='latin1',
         cursorclass=pymysql.cursors.DictCursor)
 
+
 def sanitize(arg):
-    if isinstance(arg,str):
-        return unidecode(unicode(arg,'utf8'))
+    if isinstance(arg, str):
+        return unidecode(unicode(arg, 'utf8'))
     elif isinstance(arg, unicode):
         return unidecode(arg)
     elif isinstance(arg, int):
@@ -77,8 +75,10 @@ def sanitize(arg):
             arg[key] = sanitize(value)
         return arg
 
+
 def make_celery(app):
-    celery = Celery(app.import_name, backend=app.config['CELERY_RESULT_BACKEND'],
+    celery = Celery(app.import_name,
+                    backend=app.config['CELERY_RESULT_BACKEND'],
                     broker=app.config['CELERY_BROKER_URL'])
     celery.conf.update(app.config)
     TaskBase = celery.Task
@@ -95,36 +95,37 @@ def make_celery(app):
 
 celery = make_celery(app)
 
+
 @celery.task()
 def moveall_async():
     """Background task to move all cards"""
-    rbconnection2 = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
+    rbconnection2 = pika.BlockingConnection(
+            pika.ConnectionParameters(host=MY_HOST))
     channel2 = rbconnection2.channel()
     channel2.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
     channel2.queue_declare(queue=MY_QUEUE)
-    channel2.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
-        routing_key=MY_ROUTINGKEY)
+    channel2.queue_bind(exchange=MY_EXCHANGE,
+                        queue=myqueue_object.method.queue,
+                        routing_key=MY_ROUTINGKEY)
 
     dbconnection2 = pymysql.connect(
         host=MY_DBHOST, user=MY_DBUSER, password=MY_DBPASSWORD,
         db=MY_DBDATABASE, charset='latin1',
         cursorclass=pymysql.cursors.DictCursor)
 
-
     with dbconnection2.cursor() as cursor2:
         sqlquery2 = "SELECT * FROM magiccard ORDER BY ExpansionId"
         cursor2.execute(sqlquery2)
         for card2 in cursor2.fetchall():
             json_record2 = sanitize(simplejson.dumps(card2,
-                           encoding='latin1'))
+                                    encoding='latin1'))
             channel2.basic_publish(
                      exchange=MY_EXCHANGE,
                      routing_key=MY_ROUTINGKEY,
                      body=json_record2,
                      )
     rbconnection2.close()
-    dbconnection2.close()           
-    f.close()
+    dbconnection2.close()
     return
 
 
@@ -145,11 +146,11 @@ def movecards(expansion_id):
             content = 'Not found!'
             return content, 404
         else:
-            card=cursor.fetchone()
-            expansion_name=card['Name']
+            card = cursor.fetchone()
+            expansion_name = card['Name']
 
         sqlquery = "SELECT * FROM magiccard WHERE ExpansionId = %s"
-        amount=cursor.execute(sqlquery, expansion_id)
+        amount = cursor.execute(sqlquery, expansion_id)
         for card in cursor.fetchall():
             json_record = sanitize(simplejson.dumps(card))  # sanitize string
             channel.basic_publish(
@@ -157,7 +158,6 @@ def movecards(expansion_id):
                      routing_key=MY_ROUTINGKEY,
                      body=json_record
                      )
- 
 
     content = expansion_name + ' ' + str(amount)
     return content
@@ -168,7 +168,7 @@ def card(card_id):
     f = open(MY_OUTFILE, 'r')
     fcsv = csv.reader(f)
     for row in fcsv:
-        if str(row[19] == str(card_id):
+        if str(row[19]) == str(card_id):
             return str(row)
     content = ''
     return content, 404
@@ -185,7 +185,7 @@ def cards_consumer_callback(ch, method, properties, body):
 
     f.close()
     return
- 
+
 
 @app.route('/card/:<card_id>', methods=['GET'])
 def getcard(card_id):
@@ -202,21 +202,23 @@ def getcard(card_id):
     except IOError:
         return 'No outfile found', 412
 
+
 @celery.task()
 def cards_consumer_service():
-    f = open(MY_OUTFILE, "w") # initialize cards file
+    f = open(MY_OUTFILE, "w")  # initialize cards file
     f.truncate()
     f.close()
-    rbconnection3 = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
+    rbconnection3 = pika.BlockingConnection(
+            pika.ConnectionParameters(host=MY_HOST))
     channel3 = rbconnection3.channel()
     channel3.exchange_declare(exchange=MY_EXCHANGE, exchange_type='direct')
     channel3.queue_declare(queue=MY_QUEUE)
-    channel3.queue_bind(exchange=MY_EXCHANGE, queue=myqueue_object.method.queue,
-        routing_key=MY_ROUTINGKEY)
+    channel3.queue_bind(exchange=MY_EXCHANGE,
+                        queue=myqueue_object.method.queue,
+                        routing_key=MY_ROUTINGKEY)
 
-   
     channel3.basic_consume(cards_consumer_callback,
-                          queue=MY_QUEUE, no_ack=False)
+                           queue=MY_QUEUE, no_ack=False)
     channel3.start_consuming()
 
 
