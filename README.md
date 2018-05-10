@@ -1,3 +1,11 @@
+# (ENGLISH) for prospective employers:
+
+This is an exercise I did as an admission test for CI&T. The original docker container recipe for creating the exercise is here: https://github.com/cmiranda-ciandt/magic-cards and it also requires flask, unidecode, pika, pymysql, simplejson, csv, celery (via pip) on the Linux installation (outside the container) to work.
+
+The code is minimally commented and monolythic due to the simplicity of the application. Also, since it is not an API, there are few pydoc decorations. The code is compliant to PEP-8 and verified through python PEP-8 style checker. Celery is used to overcome python-related multithreading issues for a few big data transfer tasks.
+
+The original README, in brazilian portuguese:
+
 # Desafio CI&amp;T
 
 Exercício de programação com container (docker) da CI&T de Campinas para avaliar candidatos.
