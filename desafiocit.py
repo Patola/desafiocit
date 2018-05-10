@@ -46,9 +46,6 @@ app.config['CELERY_BROKER_URL'] = MY_BROKERURL
 app.config['CELERY_RESULT_BACKEND'] = MY_RESULTBACKEND
 app.config['BROKER_HEARTBEAT'] = 0
 
-# celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'],
-#                 backend=app.config['CELERY_RESULT_BACKEND'])
-# celery.conf.update(app.config)
 
 rbconnection = pika.BlockingConnection(pika.ConnectionParameters(host=MY_HOST))
 channel = rbconnection.channel()
